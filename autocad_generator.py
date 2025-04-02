@@ -53,7 +53,7 @@ else:
         traceback.print_exc()
 
 # --- Supported AutoCAD Entities (using pyautocad methods) ---
-# Reinstating entities, using aDouble for point arrays. Using AddDimRotated for Linear Dim.
+# Reinstating entities, using aDouble for point arrays. Using AddDimRotated for Linear Dim. BOX uses AddBox.
 SUPPORTED_ENTITIES = [
     "LINE", "CIRCLE", "ARC", "TEXT", "POINT", 
     "POLYLINE", "LWPOLYLINE", "RECTANGLE", "POLYGON", # Handled via AddPolyline
@@ -170,6 +170,8 @@ def add_entities_to_drawing(acad, entities):
         entity_type = entity.get('type', '').upper()
         try:
             added = False 
+            obj = None # Variable to hold the created object
+
             if entity_type == 'LINE':
                 start = APoint(entity.get('start', [0, 0, 0]))
                 end = APoint(entity.get('end', [0, 0, 0]))
@@ -361,6 +363,7 @@ def add_entities_to_drawing(acad, entities):
 
             # --- 3D Solids ---
             elif entity_type == 'BOX':
+                # Using standard AddBox
                 corner = APoint(entity.get('corner', [0,0,0])) 
                 length = float(entity.get('length', entity.get('size', [10,10,10])[0])) 
                 width = float(entity.get('width', entity.get('size', [10,10,10])[1]))  
@@ -416,9 +419,10 @@ def add_entities_to_drawing(acad, entities):
                 face3 = space.Add3DFace(p3, p4, apex) 
                 face4 = space.Add3DFace(p4, p1, apex) 
                 base = space.Add3DFace(p1, p2, p3, p4) 
-                # Cannot assign color directly to multiple faces easily here
+                # Assign color to the first face created (applying to all requires more logic)
+                obj = face1 
                 print(f"  Added PYRAMID (as 3DFaces) centered near {center} with base side {side}, height {height}")
-                added = True # Mark as added, even though color isn't applied to all faces
+                added = True 
                 
             elif entity_type == 'WEDGE': # Re-added attempt
                  corner = APoint(entity.get('corner', [0,0,0]))
@@ -535,6 +539,7 @@ def add_entities_to_drawing(acad, entities):
                 
                 if color_aci != -1:
                     try:
+                        # For multi-object entities like PYRAMID or BOX (as faces), this only colors the 'obj' (first face)
                         obj.Color = color_aci
                         print(f"    Set color to {color_input} (ACI: {color_aci})")
                     except Exception as color_err:
@@ -584,7 +589,7 @@ def main():
         prompt1 = f"""
 Based on the following user description, generate a Python list of dictionaries representing CAD entities for AutoCAD using pyautocad.
 Each dictionary MUST include a 'type' key. Choose the most appropriate type from the supported list: {SUPPORTED_ENTITIES_STR}. For example, if the user asks for a 'square' or 'rectangle', use 'RECTANGLE'; if they ask for a 'smooth curve', use 'SPLINE'. If the specific type is mentioned (e.g., 'draw a LINE'), use that type.
-Include all necessary parameters for the chosen 'type' based on standard AutoCAD practices and the pyautocad library requirements (e.g., 'start'/'end' for LINE; 'center'/'radius' for CIRCLE; 'points' for 3DFACE/SOLID/TRACE/POLYLINE; 'fit_points' for SPLINE; 'insert'/'text'/'height' for TEXT; 'insert'/'text'/'width' for MTEXT; 'boundary_points' for HATCH; 'corner1'/'corner2' for RECTANGLE; 'center'/'radius'/'num_sides' for POLYGON; 'center'/'inner_radius'/'outer_radius' for DONUT; 'corner'/'length'/'width'/'height' for BOX; 'center'/'radius' for SPHERE; 'center'/'radius'/'height' for CYLINDER/CONE; 'center'/'torus_radius'/'tube_radius' for TORUS; 'center'/'side_length'/'height' for PYRAMID; 'vertices' for MLINE; 'block_name'/'insert' for INSERT; 'p1'/'p2'/'location'/'rotation' for DIMENSION [LINEAR only]).
+Include all necessary parameters for the chosen 'type' based on standard AutoCAD practices and the pyautocad library requirements (e.g., 'start'/'end' for LINE; 'center'/'radius' for CIRCLE; 'points' for 3DFACE/SOLID/TRACE/POLYLINE; 'fit_points' for SPLINE; 'insert'/'text'/'height' for TEXT; 'insert'/'text'/'width' for MTEXT; 'boundary_points' for HATCH; 'corner1'/'corner2' for RECTANGLE; 'center'/'radius'/'num_sides' for POLYGON; 'center'/'inner_radius'/'outer_radius' for DONUT; 'corner'/'length'/'width'/'height' or 'center'/'size' for BOX; 'center'/'radius' for SPHERE; 'center'/'radius'/'height' for CYLINDER/CONE; 'center'/'torus_radius'/'tube_radius' for TORUS; 'center'/'side_length'/'height' for PYRAMID; 'vertices' for MLINE; 'block_name'/'insert' for INSERT; 'p1'/'p2'/'location'/'rotation' for DIMENSION [LINEAR only]).
 Optionally, include a 'color' key with a common color name (red, blue, green, yellow, cyan, magenta, white, black, brown, grey) or an AutoCAD Color Index number (1-255).
 IMPORTANT NOTES: 
 - POLYLINE, LWPOLYLINE, RECTANGLE, POLYGON, HATCH boundary, and DONUT workaround use AddPolyline with aDouble array conversion.
@@ -593,7 +598,7 @@ IMPORTANT NOTES:
 - For INSERT, the block_name must refer to a block already defined in the target AutoCAD drawing. Block definitions cannot be created here.
 - For DIMENSION, only LINEAR type (using AddDimRotated) is supported using the default style. Provide 'p1', 'p2', 'location', and optionally 'rotation' (in degrees, defaults to 0 for horizontal).
 - For HATCH, provide 'boundary_points' defining a single, simple closed loop. Only 'SOLID' pattern_name is reliably supported.
-- 3D shapes (BOX, SPHERE, etc.) are generated as true 3D Solids where possible (BOX, SPHERE, CYLINDER, CONE, TORUS). PYRAMID is made of 3DFaces.
+- 3D shapes BOX and PYRAMID are made of 3DFaces. SPHERE, CYLINDER, CONE, TORUS are generated as true 3D Solids.
 Ensure coordinates and all other numerical parameters are lists or numbers as appropriate (e.g., [10.5, 20, 0] or 25.0), NOT arithmetic expressions (e.g., NOT [100/2, 4*5, 0]).
 Be precise with measurements and coordinates mentioned in the description.
 Output ONLY the Python list of dictionaries, without any surrounding text or explanations.
