@@ -3,7 +3,7 @@ import math
 import os   
 import ast
 from pyautocad import Autocad, APoint
-# Removed problematic import: from pyautocad.contrib.conv import make_variant_array 
+from pyautocad.types import aDouble # Import the array conversion utility
 import google.generativeai as genai
 from dotenv import load_dotenv
 
@@ -31,18 +31,18 @@ else:
         traceback.print_exc()
 
 # --- Supported AutoCAD Entities (using pyautocad methods) ---
-# Re-adding all requested entities based on documentation, using standard AddPolyline/AddSpline
+# Reinstating entities, using aDouble for point arrays.
 SUPPORTED_ENTITIES = [
     "LINE", "CIRCLE", "ARC", "TEXT", "POINT", 
-    "POLYLINE", "LWPOLYLINE", "RECTANGLE", "POLYGON", # Handled via AddPolyline (potential COM error)
-    "SPLINE", # Re-added (potential COM error)
+    "POLYLINE", "LWPOLYLINE", "RECTANGLE", "POLYGON", # Handled via AddPolyline
+    "SPLINE", # Re-added (using aDouble)
     "ELLIPSE", "SOLID", "XLINE", "RAY", "MTEXT", 
-    "DONUT", # Re-added (workaround using AddPolyline - potential COM error)
+    "DONUT", # Re-added (workaround using AddPolyline)
     "MLINE", "TRACE", 
     "BOX", "SPHERE", "CYLINDER", "CONE", 
     "WEDGE", # Re-added (AddWedge might not exist/work)
     "TORUS", "PYRAMID", # 3D Solids (Pyramid as 3DFaces)
-    "HATCH", # Basic support (boundary uses AddPolyline - potential COM error)
+    "HATCH", # Basic support (boundary uses AddPolyline)
     "3DFACE", 
     "INSERT", # Basic support
     "DIMENSION" # Basic Linear/Aligned support
@@ -188,7 +188,6 @@ def add_entities_to_drawing(acad, entities):
                 added = True
 
             elif entity_type in ['POLYLINE', 'LWPOLYLINE', 'RECTANGLE', 'POLYGON']: 
-                # Using AddPolyline - Expect potential COM errors
                 points_data = entity.get('points', []) 
                 if entity_type == 'RECTANGLE' and not points_data:
                      corner1 = entity.get('corner1', [0,0,0])
@@ -212,7 +211,10 @@ def add_entities_to_drawing(acad, entities):
                         p_3d = p + [0] * (3 - len(p)) if len(p) < 3 else p[:3]
                         flat_points.extend(p_3d)
                     
-                    polyline_obj = space.AddPolyline(flat_points) # Using AddPolyline - might fail
+                    # Use aDouble to convert list to COM array
+                    com_points = aDouble(*flat_points) 
+                    
+                    polyline_obj = space.AddPolyline(com_points) # Pass COM array
                     is_closed = entity.get('closed', False) or entity_type in ['RECTANGLE', 'POLYGON']
                     if is_closed and len(points_data) > 2:
                         start_pt = APoint(flat_points[0], flat_points[1], flat_points[2])
@@ -236,11 +238,13 @@ def add_entities_to_drawing(acad, entities):
                          p_3d = p + [0] * (3 - len(p)) if len(p) < 3 else p[:3]
                          flat_fit_points.extend(p_3d)
                      
+                     # Use aDouble for fit points
+                     com_fit_points = aDouble(*flat_fit_points)
+                     
                      start_tangent = APoint(entity.get('start_tangent', [0,0,0])) 
                      end_tangent = APoint(entity.get('end_tangent', [0,0,0]))
                      
-                     # Passing flat list - this might cause COM error again
-                     space.AddSpline(flat_fit_points, start_tangent, end_tangent) 
+                     space.AddSpline(com_fit_points, start_tangent, end_tangent) 
                      print(f"  Attempted SPLINE with {len(fit_points_data)} fit points.")
                      added = True
                 else:
@@ -301,7 +305,9 @@ def add_entities_to_drawing(acad, entities):
                     flat_donut_points = []
                     for p in donut_points:
                         flat_donut_points.extend(p)
-                    donut_poly = space.AddPolyline(flat_donut_points) # Using AddPolyline - might fail
+                    # Use aDouble for the polyline points
+                    com_donut_points = aDouble(*flat_donut_points)
+                    donut_poly = space.AddPolyline(com_donut_points) # Using AddPolyline - might fail
                     print(f"  Attempted DONUT (simulated as Polyline) at {center} with inner radius {inner_radius}, outer radius {outer_radius}")
                     added = True
                 else:
@@ -315,7 +321,9 @@ def add_entities_to_drawing(acad, entities):
                      for p in vertices_data:
                          p_3d = p + [0] * (3 - len(p)) if len(p) < 3 else p[:3]
                          flat_vertices.extend(p_3d)
-                     space.AddMline(flat_vertices) 
+                     # Use aDouble for MLINE points
+                     com_vertices = aDouble(*flat_vertices)
+                     space.AddMline(com_vertices) 
                      print(f"  Added MLINE with {len(vertices_data)} vertices.")
                      added = True
                  else:
@@ -328,7 +336,9 @@ def add_entities_to_drawing(acad, entities):
                      for p in points_data:
                          p_3d = p + [0] * (3 - len(p)) if len(p) < 3 else p[:3]
                          flat_points.extend(p_3d)
-                     space.AddTrace(flat_points) 
+                     # Use aDouble for TRACE points
+                     com_points = aDouble(*flat_points)
+                     space.AddTrace(com_points) 
                      print(f"  Added TRACE with {len(points_data)} points. (Width uses current TRACEWID setting)")
                      added = True
                  else:
@@ -419,7 +429,9 @@ def add_entities_to_drawing(acad, entities):
                          p_3d = p + [0] * (3 - len(p)) if len(p) < 3 else p[:3]
                          flat_points.extend(p_3d)
                      
-                     temp_boundary = space.AddPolyline(flat_points) # Using AddPolyline - might fail
+                     # Use aDouble for boundary polyline points
+                     com_boundary_points = aDouble(*flat_points)
+                     temp_boundary = space.AddPolyline(com_boundary_points) # Using AddPolyline - might fail
                      
                      start_pt = APoint(flat_points[0], flat_points[1], flat_points[2])
                      end_pt = APoint(flat_points[-3], flat_points[-2], flat_points[-1])
@@ -536,7 +548,7 @@ def main():
         prompt1 = f"""
 Based on the following user description, generate a Python list of dictionaries representing CAD entities for AutoCAD using pyautocad.
 Each dictionary MUST include a 'type' key. Choose the most appropriate type from the supported list: {SUPPORTED_ENTITIES_STR}. For example, if the user asks for a 'square' or 'rectangle', use 'RECTANGLE'; if they ask for a 'smooth curve', use 'SPLINE'. If the specific type is mentioned (e.g., 'draw a LINE'), use that type.
-Include all necessary parameters for the chosen 'type' based on standard AutoCAD practices and the pyautocad library requirements (e.g., 'start'/'end' for LINE; 'center'/'radius' for CIRCLE; 'points' for 3DFACE/SOLID/TRACE/POLYLINE; 'insert'/'text'/'height' for TEXT; 'insert'/'text'/'width' for MTEXT; 'boundary_points' for HATCH; 'corner1'/'corner2' for RECTANGLE; 'center'/'radius'/'num_sides' for POLYGON; 'center'/'inner_radius'/'outer_radius' for DONUT; 'corner'/'length'/'width'/'height' for BOX; 'center'/'radius' for SPHERE; 'center'/'radius'/'height' for CYLINDER/CONE; 'center'/'torus_radius'/'tube_radius' for TORUS; 'center'/'side_length'/'height' for PYRAMID; 'vertices' for MLINE; 'block_name'/'insert' for INSERT; 'dim_type'/'p1'/'p2'/'location' for DIMENSION).
+Include all necessary parameters for the chosen 'type' based on standard AutoCAD practices and the pyautocad library requirements (e.g., 'start'/'end' for LINE; 'center'/'radius' for CIRCLE; 'points' for 3DFACE/SOLID/TRACE/POLYLINE; 'fit_points' for SPLINE; 'insert'/'text'/'height' for TEXT; 'insert'/'text'/'width' for MTEXT; 'boundary_points' for HATCH; 'corner1'/'corner2' for RECTANGLE; 'center'/'radius'/'num_sides' for POLYGON; 'center'/'inner_radius'/'outer_radius' for DONUT; 'corner'/'length'/'width'/'height' for BOX; 'center'/'radius' for SPHERE; 'center'/'radius'/'height' for CYLINDER/CONE; 'center'/'torus_radius'/'tube_radius' for TORUS; 'center'/'side_length'/'height' for PYRAMID; 'vertices' for MLINE; 'block_name'/'insert' for INSERT; 'dim_type'/'p1'/'p2'/'location' for DIMENSION).
 IMPORTANT NOTES: 
 - POLYLINE, LWPOLYLINE, RECTANGLE, POLYGON are created using AddPolyline (potential COM error).
 - SPLINE is created using AddSpline (potential COM error).
