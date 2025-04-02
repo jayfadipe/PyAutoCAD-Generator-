@@ -7,6 +7,28 @@ from pyautocad.types import aDouble # Import the array conversion utility
 import google.generativeai as genai
 from dotenv import load_dotenv
 
+# --- Color Mapping (ACI - AutoCAD Color Index) ---
+# Basic common colors. Add more as needed.
+COLOR_MAP = {
+    "red": 1,
+    "yellow": 2,
+    "green": 3,
+    "cyan": 4,
+    "blue": 5,
+    "magenta": 6,
+    "white": 7, # Usually default
+    "grey": 8,
+    "gray": 8,
+    "lightgrey": 9,
+    "lightgray": 9,
+    "darkgrey": 251, # Example dark grey
+    "darkgray": 251,
+    "black": 250, # Often used for black background compatibility
+    "brown": 30, # Example brown ACI
+    "orange": 30, # Example orange ACI (often similar to brown)
+    # Add more specific ACI numbers if needed, e.g., "lightyellow": 52
+}
+
 # --- Configuration ---
 load_dotenv()  # Load environment variables from .env file
 # IMPORTANT: User needs to create a .env file in this directory (PyAutoCAD_Generator)
@@ -31,7 +53,7 @@ else:
         traceback.print_exc()
 
 # --- Supported AutoCAD Entities (using pyautocad methods) ---
-# Reinstating entities, using aDouble for point arrays.
+# Reinstating entities, using aDouble for point arrays. Using AddDimRotated for Linear Dim.
 SUPPORTED_ENTITIES = [
     "LINE", "CIRCLE", "ARC", "TEXT", "POINT", 
     "POLYLINE", "LWPOLYLINE", "RECTANGLE", "POLYGON", # Handled via AddPolyline
@@ -45,7 +67,7 @@ SUPPORTED_ENTITIES = [
     "HATCH", # Basic support (boundary uses AddPolyline)
     "3DFACE", 
     "INSERT", # Basic support
-    "DIMENSION" # Basic Linear/Aligned support
+    "DIMENSION" # Basic Rotated support (handles Linear)
 ]
 SUPPORTED_ENTITIES_STR = ", ".join(SUPPORTED_ENTITIES)
 
@@ -151,14 +173,14 @@ def add_entities_to_drawing(acad, entities):
             if entity_type == 'LINE':
                 start = APoint(entity.get('start', [0, 0, 0]))
                 end = APoint(entity.get('end', [0, 0, 0]))
-                space.AddLine(start, end)
+                obj = space.AddLine(start, end)
                 print(f"  Added LINE from {start} to {end}")
                 added = True
             
             elif entity_type == 'CIRCLE':
                 center = APoint(entity.get('center', [0, 0, 0]))
                 radius = float(entity.get('radius', 1))
-                space.AddCircle(center, radius)
+                obj = space.AddCircle(center, radius)
                 print(f"  Added CIRCLE at {center} with radius {radius}")
                 added = True
 
@@ -169,7 +191,7 @@ def add_entities_to_drawing(acad, entities):
                 end_angle_deg = float(entity.get('end_angle', 90))
                 start_angle_rad = math.radians(start_angle_deg)
                 end_angle_rad = math.radians(end_angle_deg)
-                space.AddArc(center, radius, start_angle_rad, end_angle_rad)
+                obj = space.AddArc(center, radius, start_angle_rad, end_angle_rad)
                 print(f"  Added ARC at {center}, radius {radius}, from {start_angle_deg} to {end_angle_deg} deg")
                 added = True
 
@@ -177,13 +199,13 @@ def add_entities_to_drawing(acad, entities):
                 insert = APoint(entity.get('insert', [0, 0, 0]))
                 text_string = str(entity.get('text', 'Default Text'))
                 height = float(entity.get('height', 2.5))
-                space.AddText(text_string, insert, height)
+                obj = space.AddText(text_string, insert, height)
                 print(f"  Added TEXT '{text_string}' at {insert} with height {height}")
                 added = True
 
             elif entity_type == 'POINT':
                 location = APoint(entity.get('location', [0, 0, 0]))
-                space.AddPoint(location)
+                obj = space.AddPoint(location)
                 print(f"  Added POINT at {location}")
                 added = True
 
@@ -211,18 +233,16 @@ def add_entities_to_drawing(acad, entities):
                         p_3d = p + [0] * (3 - len(p)) if len(p) < 3 else p[:3]
                         flat_points.extend(p_3d)
                     
-                    # Use aDouble to convert list to COM array
                     com_points = aDouble(*flat_points) 
-                    
-                    polyline_obj = space.AddPolyline(com_points) # Pass COM array
+                    obj = space.AddPolyline(com_points) 
                     is_closed = entity.get('closed', False) or entity_type in ['RECTANGLE', 'POLYGON']
                     if is_closed and len(points_data) > 2:
                         start_pt = APoint(flat_points[0], flat_points[1], flat_points[2])
                         end_pt = APoint(flat_points[-3], flat_points[-2], flat_points[-1])
                         if start_pt.distance_to(end_pt) > 1e-9: 
-                             polyline_obj.AppendVertex(start_pt) 
+                             obj.AppendVertex(start_pt) 
                         try:
-                            polyline_obj.Closed = True 
+                            obj.Closed = True 
                         except Exception as poly_close_err:
                             print(f"  Info: Could not set Closed property for polyline: {poly_close_err}")
                     print(f"  Attempted POLYLINE/RECTANGLE/POLYGON with {len(points_data)} vertices. Closed: {is_closed}")
@@ -230,7 +250,7 @@ def add_entities_to_drawing(acad, entities):
                 else:
                     print(f"  Warning: Skipping {entity_type} due to insufficient points ({len(points_data)}). Needs >= 2.")
 
-            elif entity_type == 'SPLINE': # Re-added - may cause COM error
+            elif entity_type == 'SPLINE': 
                 fit_points_data = entity.get('fit_points', [])
                 if len(fit_points_data) >= 2:
                      flat_fit_points = []
@@ -238,13 +258,11 @@ def add_entities_to_drawing(acad, entities):
                          p_3d = p + [0] * (3 - len(p)) if len(p) < 3 else p[:3]
                          flat_fit_points.extend(p_3d)
                      
-                     # Use aDouble for fit points
                      com_fit_points = aDouble(*flat_fit_points)
-                     
                      start_tangent = APoint(entity.get('start_tangent', [0,0,0])) 
                      end_tangent = APoint(entity.get('end_tangent', [0,0,0]))
                      
-                     space.AddSpline(com_fit_points, start_tangent, end_tangent) 
+                     obj = space.AddSpline(com_fit_points, start_tangent, end_tangent) 
                      print(f"  Attempted SPLINE with {len(fit_points_data)} fit points.")
                      added = True
                 else:
@@ -255,7 +273,7 @@ def add_entities_to_drawing(acad, entities):
                 major_axis_pt = APoint(entity.get('major_axis_endpoint', [center.x+1, center.y, center.z])) 
                 major_axis_vec = APoint(major_axis_pt.x - center.x, major_axis_pt.y - center.y, major_axis_pt.z - center.z)
                 radius_ratio = float(entity.get('ratio', 0.5)) 
-                space.AddEllipse(center, major_axis_vec, radius_ratio) 
+                obj = space.AddEllipse(center, major_axis_vec, radius_ratio) 
                 print(f"  Added ELLIPSE at {center} with major axis {major_axis_vec} and ratio {radius_ratio}")
                 added = True
 
@@ -265,7 +283,7 @@ def add_entities_to_drawing(acad, entities):
                     points_ap = [APoint(p) for p in points_data]
                     p1, p2, p3 = points_ap[0], points_ap[1], points_ap[2]
                     p4 = points_ap[3] if len(points_ap) == 4 else p3 
-                    space.AddSolid(p1, p2, p3, p4) 
+                    obj = space.AddSolid(p1, p2, p3, p4) 
                     print(f"  Added SOLID with {len(points_data)} points.")
                     added = True
                 else:
@@ -274,14 +292,14 @@ def add_entities_to_drawing(acad, entities):
             elif entity_type == 'XLINE':
                 base_point = APoint(entity.get('base_point', [0, 0, 0]))
                 direction_vec = APoint(entity.get('direction', [1, 0, 0])) 
-                space.AddXLine(base_point, direction_vec) 
+                obj = space.AddXLine(base_point, direction_vec) 
                 print(f"  Added XLINE at {base_point} with direction {direction_vec}")
                 added = True
 
             elif entity_type == 'RAY':
                 start_point = APoint(entity.get('start_point', [0, 0, 0]))
                 direction_vec = APoint(entity.get('direction', [1, 0, 0])) 
-                space.AddRay(start_point, direction_vec) 
+                obj = space.AddRay(start_point, direction_vec) 
                 print(f"  Added RAY from {start_point} with direction {direction_vec}")
                 added = True
 
@@ -290,9 +308,9 @@ def add_entities_to_drawing(acad, entities):
                 text_string = str(entity.get('text', 'Default MText'))
                 width = float(entity.get('width', 0)) 
                 height = float(entity.get('height', 2.5)) 
-                mtext_obj = space.AddMText(insert, width, text_string) 
+                obj = space.AddMText(insert, width, text_string) 
                 if height > 0: 
-                    mtext_obj.Height = height 
+                    obj.Height = height 
                 print(f"  Added MTEXT '{text_string[:20]}...' at {insert} with width {width}, height {height}")
                 added = True
 
@@ -305,9 +323,8 @@ def add_entities_to_drawing(acad, entities):
                     flat_donut_points = []
                     for p in donut_points:
                         flat_donut_points.extend(p)
-                    # Use aDouble for the polyline points
                     com_donut_points = aDouble(*flat_donut_points)
-                    donut_poly = space.AddPolyline(com_donut_points) # Using AddPolyline - might fail
+                    obj = space.AddPolyline(com_donut_points) # Using AddPolyline - might fail
                     print(f"  Attempted DONUT (simulated as Polyline) at {center} with inner radius {inner_radius}, outer radius {outer_radius}")
                     added = True
                 else:
@@ -321,9 +338,8 @@ def add_entities_to_drawing(acad, entities):
                      for p in vertices_data:
                          p_3d = p + [0] * (3 - len(p)) if len(p) < 3 else p[:3]
                          flat_vertices.extend(p_3d)
-                     # Use aDouble for MLINE points
                      com_vertices = aDouble(*flat_vertices)
-                     space.AddMline(com_vertices) 
+                     obj = space.AddMline(com_vertices) 
                      print(f"  Added MLINE with {len(vertices_data)} vertices.")
                      added = True
                  else:
@@ -336,9 +352,8 @@ def add_entities_to_drawing(acad, entities):
                      for p in points_data:
                          p_3d = p + [0] * (3 - len(p)) if len(p) < 3 else p[:3]
                          flat_points.extend(p_3d)
-                     # Use aDouble for TRACE points
                      com_points = aDouble(*flat_points)
-                     space.AddTrace(com_points) 
+                     obj = space.AddTrace(com_points) 
                      print(f"  Added TRACE with {len(points_data)} points. (Width uses current TRACEWID setting)")
                      added = True
                  else:
@@ -350,14 +365,14 @@ def add_entities_to_drawing(acad, entities):
                 length = float(entity.get('length', entity.get('size', [10,10,10])[0])) 
                 width = float(entity.get('width', entity.get('size', [10,10,10])[1]))  
                 height = float(entity.get('height', entity.get('size', [10,10,10])[2])) 
-                space.AddBox(corner, length, width, height) 
+                obj = space.AddBox(corner, length, width, height) 
                 print(f"  Added BOX at {corner} with L={length}, W={width}, H={height}")
                 added = True
 
             elif entity_type == 'SPHERE':
                 center = APoint(entity.get('center', [0,0,0]))
                 radius = float(entity.get('radius', 5))
-                space.AddSphere(center, radius) 
+                obj = space.AddSphere(center, radius) 
                 print(f"  Added SPHERE at {center} with radius {radius}")
                 added = True
 
@@ -365,7 +380,7 @@ def add_entities_to_drawing(acad, entities):
                 center = APoint(entity.get('center', [0,0,0])) 
                 radius = float(entity.get('radius', 5))
                 height = float(entity.get('height', 10))
-                space.AddCylinder(center, radius, height) 
+                obj = space.AddCylinder(center, radius, height) 
                 print(f"  Added CYLINDER at {center} with radius {radius}, height {height}")
                 added = True
 
@@ -373,7 +388,7 @@ def add_entities_to_drawing(acad, entities):
                 center = APoint(entity.get('center', [0,0,0])) 
                 base_radius = float(entity.get('radius', entity.get('base_radius', 5)))
                 height = float(entity.get('height', 10))
-                space.AddCone(center, base_radius, height) 
+                obj = space.AddCone(center, base_radius, height) 
                 print(f"  Added CONE at {center} with base radius {base_radius}, height {height}")
                 added = True
 
@@ -381,11 +396,12 @@ def add_entities_to_drawing(acad, entities):
                 center = APoint(entity.get('center', [0,0,0]))
                 torus_radius = float(entity.get('major_radius', entity.get('torus_radius', 10))) 
                 tube_radius = float(entity.get('minor_radius', entity.get('tube_radius', 1)))   
-                space.AddTorus(center, torus_radius, tube_radius) 
+                obj = space.AddTorus(center, torus_radius, tube_radius) 
                 print(f"  Added TORUS at {center} with torus radius {torus_radius}, tube radius {tube_radius}")
                 added = True
 
             elif entity_type == 'PYRAMID':
+                # Implementation using 3DFaces as AddPyramid is not standard
                 center = APoint(entity.get('center', [0,0,0])) 
                 side = float(entity.get('side_length', 10))
                 height = float(entity.get('height', 10))
@@ -395,13 +411,14 @@ def add_entities_to_drawing(acad, entities):
                 p3 = APoint(center.x + half_side, center.y + half_side, center.z)
                 p4 = APoint(center.x - half_side, center.y + half_side, center.z)
                 apex = APoint(center.x, center.y, center.z + height)
-                space.Add3DFace(p1, p2, apex) 
-                space.Add3DFace(p2, p3, apex) 
-                space.Add3DFace(p3, p4, apex) 
-                space.Add3DFace(p4, p1, apex) 
-                space.Add3DFace(p1, p2, p3, p4) 
+                face1 = space.Add3DFace(p1, p2, apex) 
+                face2 = space.Add3DFace(p2, p3, apex) 
+                face3 = space.Add3DFace(p3, p4, apex) 
+                face4 = space.Add3DFace(p4, p1, apex) 
+                base = space.Add3DFace(p1, p2, p3, p4) 
+                # Cannot assign color directly to multiple faces easily here
                 print(f"  Added PYRAMID (as 3DFaces) centered near {center} with base side {side}, height {height}")
-                added = True
+                added = True # Mark as added, even though color isn't applied to all faces
                 
             elif entity_type == 'WEDGE': # Re-added attempt
                  corner = APoint(entity.get('corner', [0,0,0]))
@@ -409,12 +426,12 @@ def add_entities_to_drawing(acad, entities):
                  width = float(entity.get('width', entity.get('size', [10,10,10])[1]))  
                  height = float(entity.get('height', entity.get('size', [10,10,10])[2])) 
                  try:
-                     space.AddWedge(corner, length, width, height) 
+                     obj = space.AddWedge(corner, length, width, height) 
                      print(f"  Added WEDGE at {corner} with L={length}, W={width}, H={height}")
                      added = True
                  except AttributeError:
                      print(f"  Warning: Skipping WEDGE. AddWedge method not found in this pyautocad version.")
-                     added = True # Mark as processed to avoid unsupported message
+                     added = True 
                  except Exception as wedge_err:
                      print(f"  Error adding WEDGE: {wedge_err}")
 
@@ -429,29 +446,28 @@ def add_entities_to_drawing(acad, entities):
                          p_3d = p + [0] * (3 - len(p)) if len(p) < 3 else p[:3]
                          flat_points.extend(p_3d)
                      
-                     # Use aDouble for boundary polyline points
                      com_boundary_points = aDouble(*flat_points)
-                     temp_boundary = space.AddPolyline(com_boundary_points) # Using AddPolyline - might fail
-                     
-                     start_pt = APoint(flat_points[0], flat_points[1], flat_points[2])
-                     end_pt = APoint(flat_points[-3], flat_points[-2], flat_points[-1])
-                     if start_pt.distance_to(end_pt) > 1e-9:
-                          temp_boundary.AppendVertex(start_pt)
+                     temp_boundary = None
                      try:
+                         temp_boundary = space.AddPolyline(com_boundary_points) # Using AddPolyline - might fail
+                         
+                         start_pt = APoint(flat_points[0], flat_points[1], flat_points[2])
+                         end_pt = APoint(flat_points[-3], flat_points[-2], flat_points[-1])
+                         if start_pt.distance_to(end_pt) > 1e-9:
+                              temp_boundary.AppendVertex(start_pt)
                          temp_boundary.Closed = True
-                     except Exception as poly_close_err:
-                         print(f"  Info: Could not set Closed property for hatch boundary: {poly_close_err}")
 
-                     pattern_type = 1 
-                     try:
-                         hatch_obj = space.AddHatch(pattern_type, pattern_name, associativity, (temp_boundary,)) 
+                         pattern_type = 1 
+                         # Pass boundary object in a tuple/list
+                         obj = space.AddHatch(pattern_type, pattern_name, associativity, (temp_boundary,)) 
                          print(f"  Attempted HATCH with pattern '{pattern_name}' using {len(points_data)} boundary points.")
                          added = True
+                         # temp_boundary.Delete() # Keep boundary for hatch association
                      except Exception as hatch_err:
                           print(f"  Error creating HATCH: {hatch_err}")
-                          try:
-                              temp_boundary.Delete() 
-                          except: pass 
+                          if temp_boundary:
+                              try: temp_boundary.Delete() 
+                              except: pass 
                  else:
                      print(f"  Warning: Skipping HATCH due to insufficient boundary points ({len(points_data)}). Needs >= 3.")
 
@@ -461,7 +477,7 @@ def add_entities_to_drawing(acad, entities):
                      points_ap = [APoint(p) for p in points_data]
                      p1, p2, p3 = points_ap[0], points_ap[1], points_ap[2]
                      p4 = points_ap[3] if len(points_ap) == 4 else p3
-                     space.Add3DFace(p1, p2, p3, p4) 
+                     obj = space.Add3DFace(p1, p2, p3, p4) 
                      print(f"  Added 3DFACE with {len(points_data)} points.")
                      added = True
                  else:
@@ -481,7 +497,7 @@ def add_entities_to_drawing(acad, entities):
                  rotation_rad = math.radians(rotation_deg)
                  if block_name:
                      try:
-                        space.InsertBlock(insert_point, block_name, x_scale, y_scale, z_scale, rotation_rad) 
+                        obj = space.InsertBlock(insert_point, block_name, x_scale, y_scale, z_scale, rotation_rad) 
                         print(f"  Added INSERT for block '{block_name}' at {insert_point}")
                         added = True
                      except Exception as insert_err:
@@ -497,16 +513,36 @@ def add_entities_to_drawing(acad, entities):
                  if dim_type == 'LINEAR':
                       rotation_deg = float(entity.get('rotation', 0.0)) 
                       rotation_rad = math.radians(rotation_deg)
-                      space.AddDimLinear(p1, p2, location, rotation_rad) 
-                      print(f"  Added LINEAR DIMENSION between {p1} and {p2} at {location}")
+                      # Use AddDimRotated for LINEAR type
+                      obj = space.AddDimRotated(p1, p2, location, rotation_rad) 
+                      print(f"  Added LINEAR DIMENSION (as Rotated) between {p1} and {p2} at {location} with angle {rotation_deg}")
                       added = True
-                 elif dim_type == 'ALIGNED':
-                      space.AddDimAligned(p1, p2, location) 
-                      print(f"  Added ALIGNED DIMENSION between {p1} and {p2} at {location}")
-                      added = True
+                 # elif dim_type == 'ALIGNED': # AddDimAligned likely doesn't exist
+                 #      # Requires calculating angle and using AddDimRotated
+                 #      print(f"  Warning: ALIGNED DIMENSION type not implemented yet.")
+                 #      added = True 
                  else:
-                      print(f"  Warning: Unsupported DIMENSION type '{dim_type}'. Only LINEAR and ALIGNED are implemented.")
+                      print(f"  Warning: Unsupported DIMENSION type '{dim_type}'. Only LINEAR (as Rotated) is implemented.")
             
+            # --- Apply Color if specified ---
+            if added and obj and 'color' in entity:
+                color_input = entity['color']
+                color_aci = -1 # Default to ByLayer or ByBlock
+                if isinstance(color_input, int) and 0 <= color_input <= 256:
+                    color_aci = color_input # Assume direct ACI number
+                elif isinstance(color_input, str):
+                    color_aci = COLOR_MAP.get(color_input.lower(), -1) # Lookup color name
+                
+                if color_aci != -1:
+                    try:
+                        obj.Color = color_aci
+                        print(f"    Set color to {color_input} (ACI: {color_aci})")
+                    except Exception as color_err:
+                        print(f"    Warning: Could not set color '{color_input}': {color_err}")
+                else:
+                    print(f"    Warning: Invalid or unsupported color specified: '{color_input}'. Using default.")
+
+
             # --- Final Check for Unsupported Types ---
             if not added:
                 print(f"  Warning: Unsupported entity type '{entity_type}' encountered. Skipping.")
@@ -548,23 +584,23 @@ def main():
         prompt1 = f"""
 Based on the following user description, generate a Python list of dictionaries representing CAD entities for AutoCAD using pyautocad.
 Each dictionary MUST include a 'type' key. Choose the most appropriate type from the supported list: {SUPPORTED_ENTITIES_STR}. For example, if the user asks for a 'square' or 'rectangle', use 'RECTANGLE'; if they ask for a 'smooth curve', use 'SPLINE'. If the specific type is mentioned (e.g., 'draw a LINE'), use that type.
-Include all necessary parameters for the chosen 'type' based on standard AutoCAD practices and the pyautocad library requirements (e.g., 'start'/'end' for LINE; 'center'/'radius' for CIRCLE; 'points' for 3DFACE/SOLID/TRACE/POLYLINE; 'fit_points' for SPLINE; 'insert'/'text'/'height' for TEXT; 'insert'/'text'/'width' for MTEXT; 'boundary_points' for HATCH; 'corner1'/'corner2' for RECTANGLE; 'center'/'radius'/'num_sides' for POLYGON; 'center'/'inner_radius'/'outer_radius' for DONUT; 'corner'/'length'/'width'/'height' for BOX; 'center'/'radius' for SPHERE; 'center'/'radius'/'height' for CYLINDER/CONE; 'center'/'torus_radius'/'tube_radius' for TORUS; 'center'/'side_length'/'height' for PYRAMID; 'vertices' for MLINE; 'block_name'/'insert' for INSERT; 'dim_type'/'p1'/'p2'/'location' for DIMENSION).
+Include all necessary parameters for the chosen 'type' based on standard AutoCAD practices and the pyautocad library requirements (e.g., 'start'/'end' for LINE; 'center'/'radius' for CIRCLE; 'points' for 3DFACE/SOLID/TRACE/POLYLINE; 'fit_points' for SPLINE; 'insert'/'text'/'height' for TEXT; 'insert'/'text'/'width' for MTEXT; 'boundary_points' for HATCH; 'corner1'/'corner2' for RECTANGLE; 'center'/'radius'/'num_sides' for POLYGON; 'center'/'inner_radius'/'outer_radius' for DONUT; 'corner'/'length'/'width'/'height' for BOX; 'center'/'radius' for SPHERE; 'center'/'radius'/'height' for CYLINDER/CONE; 'center'/'torus_radius'/'tube_radius' for TORUS; 'center'/'side_length'/'height' for PYRAMID; 'vertices' for MLINE; 'block_name'/'insert' for INSERT; 'p1'/'p2'/'location'/'rotation' for DIMENSION [LINEAR only]).
+Optionally, include a 'color' key with a common color name (red, blue, green, yellow, cyan, magenta, white, black, brown, grey) or an AutoCAD Color Index number (1-255).
 IMPORTANT NOTES: 
-- POLYLINE, LWPOLYLINE, RECTANGLE, POLYGON are created using AddPolyline (potential COM error).
-- SPLINE is created using AddSpline (potential COM error).
-- DONUT is simulated using AddPolyline (potential COM error).
-- HATCH boundary uses AddPolyline (potential COM error). Only 'SOLID' pattern_name is reliably supported.
+- POLYLINE, LWPOLYLINE, RECTANGLE, POLYGON, HATCH boundary, and DONUT workaround use AddPolyline with aDouble array conversion.
+- SPLINE uses AddSpline with aDouble array conversion. These may still be prone to COM errors.
 - WEDGE support is experimental (AddWedge may not exist).
 - For INSERT, the block_name must refer to a block already defined in the target AutoCAD drawing. Block definitions cannot be created here.
-- For DIMENSION, only 'LINEAR' and 'ALIGNED' dim_types are supported using the default style.
+- For DIMENSION, only LINEAR type (using AddDimRotated) is supported using the default style. Provide 'p1', 'p2', 'location', and optionally 'rotation' (in degrees, defaults to 0 for horizontal).
+- For HATCH, provide 'boundary_points' defining a single, simple closed loop. Only 'SOLID' pattern_name is reliably supported.
 - 3D shapes (BOX, SPHERE, etc.) are generated as true 3D Solids where possible (BOX, SPHERE, CYLINDER, CONE, TORUS). PYRAMID is made of 3DFaces.
 Ensure coordinates and all other numerical parameters are lists or numbers as appropriate (e.g., [10.5, 20, 0] or 25.0), NOT arithmetic expressions (e.g., NOT [100/2, 4*5, 0]).
 Be precise with measurements and coordinates mentioned in the description.
 Output ONLY the Python list of dictionaries, without any surrounding text or explanations.
 
 Example 1:
-User Description: "Draw a 50x30 rectangle starting at 10,10."
-Output: [{{'type': 'RECTANGLE', 'corner1': [10, 10, 0], 'corner2': [60, 40, 0]}}]
+User Description: "Draw a 50x30 red rectangle starting at 10,10."
+Output: [{{'type': 'RECTANGLE', 'corner1': [10, 10, 0], 'corner2': [60, 40, 0], 'color': 'red'}}]
 
 Example 2:
 User Description: "A smooth curve through points (0,0), (5,5), (10,0)."
@@ -593,7 +629,7 @@ Generated Entity List (Python):
 
 Review the generated list for accuracy, completeness, and adherence to standard AutoCAD entity parameters compatible with pyautocad.
 Supported entity types are: {SUPPORTED_ENTITIES_STR}.
-Ensure all necessary parameters for each entity type are present and correctly formatted (e.g., coordinates as lists of numbers).
+Ensure all necessary parameters for each entity type are present and correctly formatted (e.g., coordinates as lists of numbers). Check for optional 'color' key.
 Correct any mistakes, omissions, or formatting errors found in the list based *only* on the original user request and the supported types/parameters. Remove any entities with types not in the supported list.
 Output ONLY the final, verified Python list of dictionaries, without any surrounding text or explanations. If the list is already perfect, output it as is.
 """
@@ -619,9 +655,13 @@ Output ONLY the final, verified Python list of dictionaries, without any surroun
 
     # --- Save the Drawing ---
     try:
-        save_path = os.path.join(os.path.expanduser("~"), "Desktop", "pyautocad_llm_output.dwg") 
-        acad.doc.SaveAs(save_path)
-        print(f"\nDrawing saved successfully to: {save_path}")
+        # Try using Save() first, which might be more robust or prompt user if needed
+        acad.doc.Save() 
+        print(f"\nDrawing save command issued successfully for: {acad.doc.Name}")
+        # Optionally, still try SaveAs if Save() doesn't error but doesn't save where expected
+        # save_path = os.path.join(os.path.expanduser("~"), "Desktop", "pyautocad_llm_output.dwg") 
+        # acad.doc.SaveAs(save_path)
+        # print(f"\nDrawing SaveAs attempted to: {save_path}")
     except Exception as e:
         print(f"\nError saving drawing: {e}")
         traceback.print_exc()
